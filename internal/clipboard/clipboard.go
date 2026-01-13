@@ -43,7 +43,7 @@ func NewManager(maxBytes int, logger func(string, ...any)) (*Manager, error) {
 
 	err = xproto.CreateWindowChecked(
 		conn,
-		xproto.CopyFromParent,
+		0,
 		window,
 		screen.Root,
 		0,
