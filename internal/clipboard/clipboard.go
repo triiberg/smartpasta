@@ -21,6 +21,22 @@ type Manager struct {
 	logger   func(string, ...any)
 }
 
+func (m *Manager) logf(format string, args ...any) {
+	if m.logger == nil {
+		return
+	}
+	m.logger("[clipboard] "+format, args...)
+}
+
+func (m *Manager) atomName(atom xproto.Atom) string {
+	for name, value := range m.atoms {
+		if value == atom {
+			return name
+		}
+	}
+	return fmt.Sprintf("atom(%d)", atom)
+}
+
 func NewManager(maxBytes int, display string, logger func(string, ...any)) (*Manager, error) {
 	conn, err := openConn(display)
 	if err != nil {
@@ -84,6 +100,12 @@ func NewManager(maxBytes int, display string, logger func(string, ...any)) (*Man
 		logger:   logger,
 	}
 
+	manager.logf("daemon startup window=%d display=%q maxBytes=%d", window, display, maxBytes)
+	manager.logf("atom initialized name=CLIPBOARD id=%d", atoms["CLIPBOARD"])
+	manager.logf("atom initialized name=UTF8_STRING id=%d", atoms["UTF8_STRING"])
+	manager.logf("atom initialized name=STRING id=%d", atoms["STRING"])
+	manager.logf("atom initialized name=TARGETS id=%d", atoms["TARGETS"])
+
 	return manager, nil
 }
 
@@ -105,6 +127,7 @@ func (m *Manager) SetClipboard(content string) error {
 	m.current = content
 	m.mu.Unlock()
 
+	m.logf("SetSelectionOwner selection=CLIPBOARD window=%d", m.window)
 	return xproto.SetSelectionOwnerChecked(m.conn, m.window, m.atoms["CLIPBOARD"], xproto.TimeCurrentTime).Check()
 }
 
@@ -132,6 +155,7 @@ func (m *Manager) Run(onNew func(string)) error {
 
 		switch ev := event.(type) {
 		case xproto.SelectionClearEvent:
+			m.logf("SelectionClear window=%d selection=%s(%d) owner=%d", m.window, m.atomName(ev.Selection), ev.Selection, ev.Owner)
 			// Another application took clipboard ownership. Immediately request the
 			// new owner's data via ConvertSelection.
 			if ev.Selection != m.atoms["CLIPBOARD"] {
@@ -139,14 +163,17 @@ func (m *Manager) Run(onNew func(string)) error {
 			}
 			m.requestClipboard()
 		case xproto.SelectionNotifyEvent:
+			m.logf("SelectionNotify window=%d selection=%s(%d) target=%s(%d) property=%s(%d)", m.window, m.atomName(ev.Selection), ev.Selection, m.atomName(ev.Target), ev.Target, m.atomName(ev.Property), ev.Property)
 			m.handleSelectionNotify(ev, onNew)
 		case xproto.SelectionRequestEvent:
+			m.logf("SelectionRequest window=%d selection=%s(%d) target=%s(%d) requestor=%d property=%s(%d)", m.window, m.atomName(ev.Selection), ev.Selection, m.atomName(ev.Target), ev.Target, ev.Requestor, m.atomName(ev.Property), ev.Property)
 			m.handleSelectionRequest(ev)
 		}
 	}
 }
 
 func (m *Manager) requestClipboard() {
+	m.logf("ConvertSelection request window=%d selection=CLIPBOARD target=UTF8_STRING property=SMARTPASTA_CLIP", m.window)
 	_ = xproto.ConvertSelectionChecked(
 		m.conn,
 		m.window,
@@ -159,31 +186,35 @@ func (m *Manager) requestClipboard() {
 
 func (m *Manager) handleSelectionNotify(ev xproto.SelectionNotifyEvent, onNew func(string)) {
 	if ev.Property == xproto.AtomNone {
+		m.logf("SelectionNotify ignored property=NONE")
 		return
 	}
 	if ev.Selection != m.atoms["CLIPBOARD"] {
+		m.logf("SelectionNotify ignored selection=%s(%d)", m.atomName(ev.Selection), ev.Selection)
 		return
 	}
 
 	reply, err := xproto.GetProperty(m.conn, true, m.window, ev.Property, xproto.AtomAny, 0, uint32(m.maxBytes)).Reply()
 	if err != nil {
-		if m.logger != nil {
-			m.logger("get property failed: %v", err)
-		}
+		m.logf("get property failed: %v", err)
 		return
 	}
 
 	if len(reply.Value) == 0 {
+		m.logf("clipboard data reception length=0")
 		return
 	}
 	if len(reply.Value) > m.maxBytes {
+		m.logf("clipboard data reception length=%d exceeds maxBytes=%d", len(reply.Value), m.maxBytes)
 		return
 	}
 
 	content := string(reply.Value)
 	if content == "" {
+		m.logf("clipboard data reception length=0 after decode")
 		return
 	}
+	m.logf("clipboard data reception length=%d", len(reply.Value))
 
 	// Store the clipboard contents. The callback is responsible for re-acquiring
 	// ownership (SetSelectionOwner) so we continue receiving SelectionClear events.
@@ -205,6 +236,7 @@ func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 			Property:  prop,
 		}
 		_ = xproto.SendEventChecked(m.conn, false, ev.Requestor, 0, string(notify.Bytes())).Check()
+		m.logf("SelectionNotify sent requestor=%d selection=%s(%d) target=%s(%d) property=%s(%d)", ev.Requestor, m.atomName(ev.Selection), ev.Selection, m.atomName(ev.Target), ev.Target, m.atomName(prop), prop)
 	}
 
 	if ev.Selection != m.atoms["CLIPBOARD"] {
@@ -221,6 +253,7 @@ func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 		for i, atom := range targets {
 			xgb.Put32(data[i*4:], uint32(atom))
 		}
+		m.logf("clipboard data serving target=%s(%d) length=%d", m.atomName(ev.Target), ev.Target, len(data))
 		err := xproto.ChangePropertyChecked(
 			m.conn,
 			xproto.PropModeReplace,
@@ -246,6 +279,7 @@ func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 
 	content := m.Current()
 	if content == "" {
+		m.logf("clipboard data serving target=%s(%d) length=0", m.atomName(ev.Target), ev.Target)
 		sendNotify(xproto.AtomNone)
 		return
 	}
@@ -256,6 +290,7 @@ func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 	// 3) We write the current clipboard payload into the requestor's property.
 	// 4) We send SelectionNotify to signal completion (even on failure).
 	bytes := []byte(content)
+	m.logf("clipboard data serving target=%s(%d) length=%d", m.atomName(ev.Target), ev.Target, len(bytes))
 	propertyType := ev.Target
 	if ev.Target == m.atoms["STRING"] {
 		propertyType = xproto.AtomString
