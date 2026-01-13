@@ -22,10 +22,13 @@ type Manager struct {
 	logger   func(string, ...any)
 }
 
-func NewManager(maxBytes int, logger func(string, ...any)) (*Manager, error) {
-	conn, err := xgb.NewConn()
+func NewManager(maxBytes int, display string, logger func(string, ...any)) (*Manager, error) {
+	conn, err := openConn(display)
 	if err != nil {
-		return nil, fmt.Errorf("connect to X11: %w", err)
+		if display == "" {
+			return nil, fmt.Errorf("connect to X11: %w", err)
+		}
+		return nil, fmt.Errorf("connect to X11 display %q: %w", display, err)
 	}
 
 	if err := xfixes.Init(conn); err != nil {
@@ -96,6 +99,13 @@ func NewManager(maxBytes int, logger func(string, ...any)) (*Manager, error) {
 	}
 
 	return manager, nil
+}
+
+func openConn(display string) (*xgb.Conn, error) {
+	if display == "" {
+		return xgb.NewConn()
+	}
+	return xgb.NewConnDisplay(display)
 }
 
 func (m *Manager) Close() {
