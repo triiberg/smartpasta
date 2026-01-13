@@ -81,6 +81,7 @@ func NewManager(maxBytes int, display string, logger func(string, ...any)) (*Man
 
 	atoms, err := internAtoms(conn, []string{
 		"CLIPBOARD",
+		"ATOM",
 		"UTF8_STRING",
 		"TARGETS",
 		"TEXT",
@@ -102,6 +103,7 @@ func NewManager(maxBytes int, display string, logger func(string, ...any)) (*Man
 
 	manager.logf("daemon startup window=%d display=%q maxBytes=%d", window, display, maxBytes)
 	manager.logf("atom initialized name=CLIPBOARD id=%d", atoms["CLIPBOARD"])
+	manager.logf("atom initialized name=ATOM id=%d", atoms["ATOM"])
 	manager.logf("atom initialized name=UTF8_STRING id=%d", atoms["UTF8_STRING"])
 	manager.logf("atom initialized name=STRING id=%d", atoms["STRING"])
 	manager.logf("atom initialized name=TARGETS id=%d", atoms["TARGETS"])
@@ -128,7 +130,11 @@ func (m *Manager) SetClipboard(content string) error {
 	m.mu.Unlock()
 
 	m.logf("SetSelectionOwner selection=CLIPBOARD window=%d", m.window)
-	return xproto.SetSelectionOwnerChecked(m.conn, m.window, m.atoms["CLIPBOARD"], xproto.TimeCurrentTime).Check()
+	if err := xproto.SetSelectionOwnerChecked(m.conn, m.window, m.atoms["CLIPBOARD"], xproto.TimeCurrentTime).Check(); err != nil {
+		return err
+	}
+	m.conn.Flush()
+	return nil
 }
 
 func (m *Manager) Current() string {
@@ -224,7 +230,7 @@ func (m *Manager) handleSelectionNotify(ev xproto.SelectionNotifyEvent, onNew fu
 func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 	property := ev.Property
 	if property == xproto.AtomNone {
-		property = ev.Target
+		property = m.atoms["SMARTPASTA_CLIP"]
 	}
 
 	sendNotify := func(prop xproto.Atom) {
@@ -236,6 +242,7 @@ func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 			Property:  prop,
 		}
 		_ = xproto.SendEventChecked(m.conn, false, ev.Requestor, 0, string(notify.Bytes())).Check()
+		m.conn.Flush()
 		m.logf("SelectionNotify sent requestor=%d selection=%s(%d) target=%s(%d) property=%s(%d)", ev.Requestor, m.atomName(ev.Selection), ev.Selection, m.atomName(ev.Target), ev.Target, m.atomName(prop), prop)
 	}
 
@@ -248,18 +255,20 @@ func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 	}
 
 	if ev.Target == m.atoms["TARGETS"] {
-		targets := []xproto.Atom{m.atoms["UTF8_STRING"], m.atoms["TEXT"], m.atoms["STRING"], m.atoms["TARGETS"]}
-		data := make([]byte, len(targets)*4)
-		for i, atom := range targets {
-			xgb.Put32(data[i*4:], uint32(atom))
+		targets := []xproto.Atom{
+			m.atoms["TARGETS"],
+			m.atoms["UTF8_STRING"],
+			m.atoms["STRING"],
+			m.atoms["TEXT"],
 		}
+		data := packAtoms32(targets)
 		m.logf("clipboard data serving target=%s(%d) length=%d", m.atomName(ev.Target), ev.Target, len(data))
 		err := xproto.ChangePropertyChecked(
 			m.conn,
 			xproto.PropModeReplace,
 			ev.Requestor,
 			property,
-			xproto.AtomAtom,
+			m.atoms["ATOM"],
 			32,
 			uint32(len(targets)),
 			data,
@@ -278,12 +287,6 @@ func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 	}
 
 	content := m.Current()
-	if content == "" {
-		m.logf("clipboard data serving target=%s(%d) length=0", m.atomName(ev.Target), ev.Target)
-		sendNotify(xproto.AtomNone)
-		return
-	}
-
 	// X11 selection flow:
 	// 1) We previously called SetSelectionOwner to claim CLIPBOARD.
 	// 2) A requester sends SelectionRequest with a target (UTF8_STRING/STRING/TEXT).
@@ -293,7 +296,10 @@ func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 	m.logf("clipboard data serving target=%s(%d) length=%d", m.atomName(ev.Target), ev.Target, len(bytes))
 	propertyType := ev.Target
 	if ev.Target == m.atoms["STRING"] {
-		propertyType = xproto.AtomString
+		propertyType = m.atoms["STRING"]
+	}
+	if ev.Target == m.atoms["TEXT"] {
+		propertyType = m.atoms["UTF8_STRING"]
 	}
 	err := xproto.ChangePropertyChecked(
 		m.conn,
@@ -311,6 +317,14 @@ func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 	}
 
 	sendNotify(property)
+}
+
+func packAtoms32(atoms []xproto.Atom) []byte {
+	data := make([]byte, len(atoms)*4)
+	for i, atom := range atoms {
+		xgb.Put32(data[i*4:], uint32(atom))
+	}
+	return data
 }
 
 func internAtoms(conn *xgb.Conn, names []string) (map[string]xproto.Atom, error) {
