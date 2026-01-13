@@ -579,7 +579,7 @@ func (u *ui) drawText(conn *xgb.Conn, x int, y int, text string, gc xproto.Gcont
 	if len(bytes) > 255 {
 		bytes = bytes[:255]
 	}
-	_ = xproto.ImageText8Checked(conn, uint8(len(bytes)), xproto.Drawable(u.window), gc, int16(x), int16(y), bytes).Check()
+	_ = xproto.ImageText8Checked(conn, uint8(len(bytes)), xproto.Drawable(u.window), gc, int16(x), int16(y), string(bytes)).Check()
 }
 
 func previewLine(content string) string {
