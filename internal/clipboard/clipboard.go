@@ -133,7 +133,7 @@ func (m *Manager) SetClipboard(content string) error {
 	if err := xproto.SetSelectionOwnerChecked(m.conn, m.window, m.atoms["CLIPBOARD"], xproto.TimeCurrentTime).Check(); err != nil {
 		return err
 	}
-	m.conn.Flush()
+	m.conn.Sync()
 	return nil
 }
 
@@ -242,7 +242,7 @@ func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 			Property:  prop,
 		}
 		_ = xproto.SendEventChecked(m.conn, false, ev.Requestor, 0, string(notify.Bytes())).Check()
-		m.conn.Flush()
+		m.conn.Sync()
 		m.logf("SelectionNotify sent requestor=%d selection=%s(%d) target=%s(%d) property=%s(%d)", ev.Requestor, m.atomName(ev.Selection), ev.Selection, m.atomName(ev.Target), ev.Target, m.atomName(prop), prop)
 	}
 
