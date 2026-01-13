@@ -122,8 +122,8 @@ func (c *ipcClient) dump() error {
 }
 
 type keymap struct {
-	minKeycode byte
-	maxKeycode byte
+	minKeycode xproto.Keycode
+	maxKeycode xproto.Keycode
 	perCode    int
 	keysyms    []xproto.Keysym
 }
@@ -454,10 +454,10 @@ func createGC(conn *xgb.Conn, window xproto.Window, fg uint32, bg uint32, font x
 	if err != nil {
 		return 0, err
 	}
-	mask := uint32(xproto.GCForeground | xproto.GCBackground)
+	mask := uint32(xproto.GcForeground | xproto.GcBackground)
 	values := []uint32{fg, bg}
 	if font != 0 {
-		mask |= xproto.GCFont
+		mask |= xproto.GcFont
 		values = append(values, uint32(font))
 	}
 	if err := xproto.CreateGCChecked(conn, gc, xproto.Drawable(window), mask, values).Check(); err != nil {
@@ -471,8 +471,6 @@ func (u *ui) run(conn *xgb.Conn, keymap *keymap, client *ipcClient) error {
 		return err
 	}
 	_ = xproto.SetInputFocusChecked(conn, xproto.InputFocusPointerRoot, u.window, xproto.TimeCurrentTime).Check()
-	conn.Flush()
-
 	u.draw(conn)
 
 	for {
@@ -551,7 +549,6 @@ func (u *ui) draw(conn *xgb.Conn) {
 		msg := "No clipboard history"
 		u.drawText(conn, padding, textY, msg, u.textGC)
 		u.drawFooter(conn)
-		conn.Flush()
 		return
 	}
 
@@ -567,7 +564,6 @@ func (u *ui) draw(conn *xgb.Conn) {
 		u.drawText(conn, padding, y+u.lineHeight-4, previewLine(u.state.entries[i].Content), u.textGC)
 	}
 	u.drawFooter(conn)
-	conn.Flush()
 }
 
 func (u *ui) drawFooter(conn *xgb.Conn) {
