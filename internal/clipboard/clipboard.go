@@ -184,27 +184,63 @@ func (m *Manager) requestClipboard() {
 		m.logf("clipboard owner window=%d", owner.Owner)
 	}
 
+	m.requestClipboardTarget(m.atoms["UTF8_STRING"])
+}
+
+func (m *Manager) requestClipboardTarget(target xproto.Atom) {
+	if target == m.atoms["UTF8_STRING"] {
+		m.logf(
+			"ConvertSelection request window=%d selection=CLIPBOARD target=UTF8_STRING property=None",
+			m.window,
+		)
+	} else {
+		m.logf(
+			"ConvertSelection request window=%d selection=CLIPBOARD target=%s(%d) property=None",
+			m.window,
+			m.atomName(target),
+			target,
+		)
+	}
+	_ = xproto.ConvertSelectionChecked(
+		m.conn,
+		m.window,
+		m.atoms["CLIPBOARD"],
+		target,
+		xproto.AtomNone, // ✅ REQUIRED
+		xproto.TimeCurrentTime,
+	).Check()
+}
+
+func (m *Manager) requestTargets() {
 	m.logf(
-		"ConvertSelection request window=%d selection=CLIPBOARD target=UTF8_STRING property=None",
+		"ConvertSelection request window=%d selection=CLIPBOARD target=TARGETS property=None",
 		m.window,
 	)
 	_ = xproto.ConvertSelectionChecked(
 		m.conn,
 		m.window,
 		m.atoms["CLIPBOARD"],
-		m.atoms["UTF8_STRING"],
-		xproto.AtomNone, // ✅ REQUIRED
+		m.atoms["TARGETS"],
+		xproto.AtomNone,
 		xproto.TimeCurrentTime,
 	).Check()
 }
 
 func (m *Manager) handleSelectionNotify(ev xproto.SelectionNotifyEvent, onNew func(string)) {
-	if ev.Property == xproto.AtomNone {
-		m.logf("SelectionNotify ignored property=NONE")
-		return
-	}
 	if ev.Selection != m.atoms["CLIPBOARD"] {
 		m.logf("SelectionNotify ignored selection=%s(%d)", m.atomName(ev.Selection), ev.Selection)
+		return
+	}
+	if ev.Property == xproto.AtomNone {
+		m.logf("SelectionNotify ignored property=NONE")
+		if ev.Target == m.atoms["UTF8_STRING"] {
+			m.requestTargets()
+		}
+		return
+	}
+
+	if ev.Target == m.atoms["TARGETS"] {
+		m.handleTargetsNotify(ev)
 		return
 	}
 
@@ -233,6 +269,27 @@ func (m *Manager) handleSelectionNotify(ev xproto.SelectionNotifyEvent, onNew fu
 	// Store the clipboard contents. The callback is responsible for re-acquiring
 	// ownership (SetSelectionOwner) so we continue receiving SelectionClear events.
 	onNew(content)
+}
+
+func (m *Manager) handleTargetsNotify(ev xproto.SelectionNotifyEvent) {
+	reply, err := xproto.GetProperty(m.conn, true, m.window, ev.Property, xproto.AtomAny, 0, uint32(m.maxBytes)).Reply()
+	if err != nil {
+		m.logf("get property failed: %v", err)
+		return
+	}
+
+	available := unpackAtoms32(reply.Value)
+	target := selectBestTarget(available, []xproto.Atom{
+		m.atoms["UTF8_STRING"],
+		m.atoms["STRING"],
+		m.atoms["TEXT"],
+	})
+	if target == xproto.AtomNone {
+		m.logf("clipboard targets missing expected formats length=%d", len(available))
+		return
+	}
+
+	m.requestClipboardTarget(target)
 }
 
 func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
@@ -333,6 +390,28 @@ func packAtoms32(atoms []xproto.Atom) []byte {
 		xgb.Put32(data[i*4:], uint32(atom))
 	}
 	return data
+}
+
+func unpackAtoms32(data []byte) []xproto.Atom {
+	count := len(data) / 4
+	atoms := make([]xproto.Atom, 0, count)
+	for i := 0; i < count; i++ {
+		atoms = append(atoms, xproto.Atom(xgb.Get32(data[i*4:])))
+	}
+	return atoms
+}
+
+func selectBestTarget(available []xproto.Atom, preferred []xproto.Atom) xproto.Atom {
+	availableSet := make(map[xproto.Atom]struct{}, len(available))
+	for _, atom := range available {
+		availableSet[atom] = struct{}{}
+	}
+	for _, atom := range preferred {
+		if _, ok := availableSet[atom]; ok {
+			return atom
+		}
+	}
+	return xproto.AtomNone
 }
 
 func internAtoms(conn *xgb.Conn, names []string) (map[string]xproto.Atom, error) {
