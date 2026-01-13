@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/BurntSushi/xgb"
-	"github.com/BurntSushi/xgb/xfixes"
 	"github.com/BurntSushi/xgb/xproto"
 )
 
@@ -31,11 +30,6 @@ func NewManager(maxBytes int, display string, logger func(string, ...any)) (*Man
 		return nil, fmt.Errorf("connect to X11 display %q: %w", display, err)
 	}
 
-	if err := xfixes.Init(conn); err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("init xfixes: %w", err)
-	}
-
 	setup := xproto.Setup(conn)
 	screen := setup.DefaultScreen(conn)
 	window, err := xproto.NewWindowId(conn)
@@ -58,7 +52,10 @@ func NewManager(maxBytes int, display string, logger func(string, ...any)) (*Man
 		screen.RootVisual,
 		xproto.CwEventMask,
 		[]uint32{
-			xproto.EventMaskPropertyChange,
+			xproto.EventMaskPropertyChange | xproto.EventMaskStructureNotify,
+			// Selection events (SelectionNotify/Clear/Request) are delivered to
+			// the owner/requestor, so we keep an explicit event mask to ensure
+			// the hidden window is eligible for property updates tied to selections.
 		},
 	).Check()
 	if err != nil {
@@ -77,24 +74,6 @@ func NewManager(maxBytes int, display string, logger func(string, ...any)) (*Man
 	if err != nil {
 		conn.Close()
 		return nil, err
-	}
-
-	err = xfixes.SelectSelectionInputChecked(
-		conn,
-		window,
-		atoms["CLIPBOARD"],
-		xfixes.SelectionEventMaskSetSelectionOwner,
-	).Check()
-	if err != nil {
-		var requestErr xproto.RequestError
-		if errors.As(err, &requestErr) {
-			if logger != nil {
-				logger("select selection input failed: %v (continuing without clipboard owner notifications)", err)
-			}
-		} else {
-			conn.Close()
-			return nil, fmt.Errorf("select selection input: %w", err)
-		}
 	}
 
 	manager := &Manager{
@@ -140,6 +119,9 @@ func (m *Manager) Run(onNew func(string)) error {
 		return errors.New("onNew callback required")
 	}
 
+	// Prime the loop by requesting the current clipboard contents. This is event-driven:
+	// SelectionNotify will deliver the data, and onNew should re-acquire ownership via
+	// SetClipboard.
 	m.requestClipboard()
 
 	for {
@@ -149,11 +131,10 @@ func (m *Manager) Run(onNew func(string)) error {
 		}
 
 		switch ev := event.(type) {
-		case xfixes.SelectionNotifyEvent:
+		case xproto.SelectionClearEvent:
+			// Another application took clipboard ownership. Immediately request the
+			// new owner's data via ConvertSelection.
 			if ev.Selection != m.atoms["CLIPBOARD"] {
-				continue
-			}
-			if ev.Owner == m.window {
 				continue
 			}
 			m.requestClipboard()
@@ -204,10 +185,16 @@ func (m *Manager) handleSelectionNotify(ev xproto.SelectionNotifyEvent, onNew fu
 		return
 	}
 
+	// Store the clipboard contents. The callback is responsible for re-acquiring
+	// ownership (SetSelectionOwner) so we continue receiving SelectionClear events.
 	onNew(content)
 }
 
 func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
+	if ev.Selection != m.atoms["CLIPBOARD"] {
+		return
+	}
+
 	property := ev.Property
 	if property == xproto.AtomNone {
 		property = ev.Target
