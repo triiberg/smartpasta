@@ -23,6 +23,7 @@ build:
 ## Install binaries to ~/.local/bin
 install: build
 	@echo "==> Installing binaries to $(BIN_DIR)"
+	killall -q $(DAEMON) || true
 	mkdir -p $(BIN_DIR)
 	cp $(DAEMON) $(BIN_DIR)/
 	cp $(UI) $(BIN_DIR)/
