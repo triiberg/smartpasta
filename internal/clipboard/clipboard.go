@@ -191,10 +191,6 @@ func (m *Manager) handleSelectionNotify(ev xproto.SelectionNotifyEvent, onNew fu
 }
 
 func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
-	if ev.Selection != m.atoms["CLIPBOARD"] {
-		return
-	}
-
 	property := ev.Property
 	if property == xproto.AtomNone {
 		property = ev.Target
@@ -209,6 +205,14 @@ func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 			Property:  prop,
 		}
 		_ = xproto.SendEventChecked(m.conn, false, ev.Requestor, 0, string(notify.Bytes())).Check()
+	}
+
+	if ev.Selection != m.atoms["CLIPBOARD"] {
+		// Always respond with SelectionNotify, even if we are not the owner for
+		// this selection. This keeps requestors from hanging while awaiting a
+		// reply.
+		sendNotify(xproto.AtomNone)
+		return
 	}
 
 	if ev.Target == m.atoms["TARGETS"] {
@@ -246,8 +250,13 @@ func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 		return
 	}
 
+	// X11 selection flow:
+	// 1) We previously called SetSelectionOwner to claim CLIPBOARD.
+	// 2) A requester sends SelectionRequest with a target (UTF8_STRING/STRING/TEXT).
+	// 3) We write the current clipboard payload into the requestor's property.
+	// 4) We send SelectionNotify to signal completion (even on failure).
 	bytes := []byte(content)
-	propertyType := m.atoms["UTF8_STRING"]
+	propertyType := ev.Target
 	if ev.Target == m.atoms["STRING"] {
 		propertyType = xproto.AtomString
 	}
