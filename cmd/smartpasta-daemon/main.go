@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	"smartpasta/internal/ipc"
 	"smartpasta/internal/logging"
 )
+
+var buildFlavor = "stable"
 
 func main() {
 	maxEntries := flag.Int("max-entries", history.DefaultMaxEntries, "maximum clipboard entries")
@@ -45,6 +48,17 @@ func main() {
 	if err != nil {
 		logger.Errorf("clipboard init failed: %v", err)
 		fmt.Fprintln(os.Stderr, "failed to initialize clipboard")
+		if isAlphaBuild() {
+			fmt.Fprintf(os.Stderr, "clipboard init error: %v\n", err)
+			fmt.Fprintf(
+				os.Stderr,
+				"env DISPLAY=%q WAYLAND_DISPLAY=%q XDG_SESSION_TYPE=%q\n",
+				os.Getenv("DISPLAY"),
+				os.Getenv("WAYLAND_DISPLAY"),
+				os.Getenv("XDG_SESSION_TYPE"),
+			)
+			fmt.Fprintf(os.Stderr, "log file: %s\n", filepath.Join(cacheDir, "logs", "smartpasta-daemon.log"))
+		}
 		os.Exit(1)
 	}
 	defer clipboardManager.Close()
@@ -94,4 +108,9 @@ func main() {
 	for time.Now().Before(shutdownDeadline) {
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+func isAlphaBuild() bool {
+	flavor := strings.ToLower(strings.TrimSpace(buildFlavor))
+	return flavor == "alpha" || strings.HasPrefix(flavor, "alpha-")
 }
