@@ -21,6 +21,7 @@ var buildFlavor = "stable"
 func main() {
 	maxEntries := flag.Int("max-entries", history.DefaultMaxEntries, "maximum clipboard entries")
 	maxBytes := flag.Int("max-bytes", history.DefaultMaxBytes, "maximum clipboard entry size in bytes")
+	display := flag.String("display", "", "X11 display to use (overrides DISPLAY)")
 	flag.Parse()
 
 	homeDir, err := os.UserHomeDir()
@@ -44,7 +45,7 @@ func main() {
 
 	historyStore := history.New(*maxEntries, *maxBytes)
 
-	clipboardManager, err := clipboard.NewManager(*maxBytes, logger.Errorf)
+	clipboardManager, err := clipboard.NewManager(*maxBytes, *display, logger.Errorf)
 	if err != nil {
 		logger.Errorf("clipboard init failed: %v", err)
 		fmt.Fprintln(os.Stderr, "failed to initialize clipboard")
