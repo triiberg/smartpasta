@@ -64,6 +64,8 @@ func main() {
 	}
 	defer clipboardManager.Close()
 
+	_ = clipboardManager.SetClipboard("smartpasta test")
+
 	onNew := func(content string) {
 		entry, added := historyStore.Add(content)
 		if !added {
