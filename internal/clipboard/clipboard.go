@@ -86,8 +86,15 @@ func NewManager(maxBytes int, display string, logger func(string, ...any)) (*Man
 		xfixes.SelectionEventMaskSetSelectionOwner,
 	).Check()
 	if err != nil {
-		conn.Close()
-		return nil, fmt.Errorf("select selection input: %w", err)
+		var requestErr xproto.RequestError
+		if errors.As(err, &requestErr) {
+			if logger != nil {
+				logger("select selection input failed: %v (continuing without clipboard owner notifications)", err)
+			}
+		} else {
+			conn.Close()
+			return nil, fmt.Errorf("select selection input: %w", err)
+		}
 	}
 
 	manager := &Manager{
