@@ -43,11 +43,15 @@ func NewManager(maxBytes int, logger func(string, ...any)) (*Manager, error) {
 
 	err = xproto.CreateWindowChecked(
 		conn,
-		xproto.WindowClassInputOnly,
+		xproto.CopyFromParent,
 		window,
 		screen.Root,
-		0, 0, 1, 1,
 		0,
+		0,
+		1,
+		1,
+		0,
+		xproto.WindowClassInputOnly,
 		screen.RootVisual,
 		xproto.CwEventMask,
 		[]uint32{
@@ -96,7 +100,7 @@ func NewManager(maxBytes int, logger func(string, ...any)) (*Manager, error) {
 
 func (m *Manager) Close() {
 	if m.conn != nil {
-		_ = m.conn.Close()
+		m.conn.Close()
 	}
 }
 
@@ -201,14 +205,13 @@ func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 			Property:  prop,
 		}
 		_ = xproto.SendEventChecked(m.conn, false, ev.Requestor, 0, string(notify.Bytes())).Check()
-		_ = m.conn.Flush()
 	}
 
 	if ev.Target == m.atoms["TARGETS"] {
 		targets := []xproto.Atom{m.atoms["UTF8_STRING"], m.atoms["TEXT"], m.atoms["STRING"], m.atoms["TARGETS"]}
-		data := make([]uint32, len(targets))
+		data := make([]byte, len(targets)*4)
 		for i, atom := range targets {
-			data[i] = uint32(atom)
+			xgb.Put32(data[i*4:], uint32(atom))
 		}
 		err := xproto.ChangePropertyChecked(
 			m.conn,
@@ -217,7 +220,7 @@ func (m *Manager) handleSelectionRequest(ev xproto.SelectionRequestEvent) {
 			property,
 			xproto.AtomAtom,
 			32,
-			uint32(len(data)),
+			uint32(len(targets)),
 			data,
 		).Check()
 		if err != nil {
