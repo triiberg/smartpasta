@@ -179,13 +179,21 @@ func (m *Manager) Run(onNew func(string)) error {
 }
 
 func (m *Manager) requestClipboard() {
-	m.logf("ConvertSelection request window=%d selection=CLIPBOARD target=UTF8_STRING property=SMARTPASTA_CLIP", m.window)
+	owner, err := xproto.GetSelectionOwner(m.conn, m.atoms["CLIPBOARD"]).Reply()
+	if err == nil {
+		m.logf("clipboard owner window=%d", owner.Owner)
+	}
+
+	m.logf(
+		"ConvertSelection request window=%d selection=CLIPBOARD target=UTF8_STRING property=None",
+		m.window,
+	)
 	_ = xproto.ConvertSelectionChecked(
 		m.conn,
 		m.window,
 		m.atoms["CLIPBOARD"],
 		m.atoms["UTF8_STRING"],
-		m.atoms["SMARTPASTA_CLIP"],
+		xproto.AtomNone, // ✅ REQUIRED
 		xproto.TimeCurrentTime,
 	).Check()
 }
