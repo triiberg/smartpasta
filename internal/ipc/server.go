@@ -15,8 +15,9 @@ import (
 )
 
 type Request struct {
-	Op string `json:"op"`
-	ID int64  `json:"id,omitempty"`
+	Op      string `json:"op"`
+	ID      int64  `json:"id,omitempty"`
+	Content string `json:"content,omitempty"`
 }
 
 type Response struct {

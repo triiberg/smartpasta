@@ -130,10 +130,28 @@ func (m *Manager) SetClipboard(content string) error {
 	m.mu.Unlock()
 
 	m.logf("SetSelectionOwner selection=CLIPBOARD window=%d", m.window)
-	if err := xproto.SetSelectionOwnerChecked(m.conn, m.window, m.atoms["CLIPBOARD"], xproto.TimeCurrentTime).Check(); err != nil {
+	if err := xproto.SetSelectionOwnerChecked(
+		m.conn,
+		m.window,
+		m.atoms["CLIPBOARD"],
+		xproto.TimeCurrentTime,
+	).Check(); err != nil {
 		return err
 	}
 	m.conn.Sync()
+
+	// 🔍 VERIFY OWNERSHIP IMMEDIATELY
+	if owner, err := xproto.GetSelectionOwner(
+		m.conn,
+		m.atoms["CLIPBOARD"],
+	).Reply(); err == nil {
+		m.logf(
+			"post-SetClipboard owner=%d (me=%d)",
+			owner.Owner,
+			m.window,
+		)
+	}
+
 	return nil
 }
 
