@@ -179,9 +179,25 @@ func (m *Manager) Run(onNew func(string)) error {
 
 		switch ev := event.(type) {
 		case xproto.SelectionClearEvent:
-			m.logf("SelectionClear window=%d selection=%s(%d) owner=%d", m.window, m.atomName(ev.Selection), ev.Selection, ev.Owner)
-			// Another application took clipboard ownership. Immediately request the
-			// new owner's data via ConvertSelection.
+			m.logf(
+				"SelectionClear window=%d selection=%s(%d) owner=%d",
+				m.window,
+				m.atomName(ev.Selection),
+				ev.Selection,
+				ev.Owner,
+			)
+
+			if owner, err := xproto.GetSelectionOwner(
+				m.conn,
+				m.atoms["CLIPBOARD"],
+			).Reply(); err == nil {
+				m.logf(
+					"after SelectionClear: new owner=%d (me=%d)",
+					owner.Owner,
+					m.window,
+				)
+			}
+
 			if ev.Selection != m.atoms["CLIPBOARD"] {
 				continue
 			}
