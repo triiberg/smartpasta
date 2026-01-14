@@ -191,13 +191,16 @@ func (m *Manager) Run(onNew func(string)) error {
 				m.conn,
 				m.atoms["CLIPBOARD"],
 			).Reply(); err == nil {
+				if owner.Owner == m.window {
+					// I already own the clipboard; do not ConvertSelection
+					return errors.New("owner.Owner == m.window")
+				}
 				m.logf(
 					"after SelectionClear: new owner=%d (me=%d)",
 					owner.Owner,
 					m.window,
 				)
 			}
-
 			if ev.Selection != m.atoms["CLIPBOARD"] {
 				continue
 			}
